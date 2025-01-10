@@ -1,5 +1,24 @@
 name: "Build image and deploy"
 description: "Une action représentant toutes les étapes pour déployer une application dans le cluster Kubernetes"
+inputs:
+  docker_registry_url: 
+    description: "TODO"
+    required: true
+  docker_registry:
+    description: "TODO"
+    required: true
+  docker_registry_tag_prefix:
+    description: "TODO"
+    required: true
+  docker_username:
+    description: "TODO"
+    required: true
+  docker_password:
+    description: "TODO"
+    required: true
+  kubeconfig:
+    description: "TODO"
+    required: true
 runs:
   using: "composite"
   steps:
@@ -8,7 +27,7 @@ runs:
       
     - name: Login into private image repository
       run: |
-        buildah login -u ${{ vars.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }} ${{ vars.DOCKER_REGISTRY_URL }}
+        buildah login -u ${{ inputs.docker_username }} -p ${{ inputs.docker_password }} ${{ inputs.docker_registry_url }}
 
     - name: Prepare variables for next steps
       run: |
@@ -29,11 +48,11 @@ runs:
         
         # Calculer diverses valeurs utilisés pour le déploiement
         urlComplete="${urlWithoutDomain}.kapydata.com"
-        lowercaseDockerRegistry=$(echo "${{ vars.DOCKER_REGISTRY }}" | tr '[:upper:]' '[:lower:]')
+        lowercaseDockerRegistry=$(echo "${{ inputs.docker_registry }}" | tr '[:upper:]' '[:lower:]')
         lowercaseGitHubRepository=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
         imagePathInRepository="${lowercaseDockerRegistry}/${lowercaseGitHubRepository}"
-        tagVersion="${{ vars.DOCKER_REGISTRY_TAG_PREFIX }}/${imagePathInRepository}:$version"
-        tagBranch="${{ vars.DOCKER_REGISTRY_TAG_PREFIX }}/${imagePathInRepository}:$branchTag"
+        tagVersion="${{ inputs.docker_registry_tag_prefix }}/${imagePathInRepository}:$version"
+        tagBranch="${{ inputs.docker_registry_tag_prefix }}/${imagePathInRepository}:$branchTag"
         
         # Rendre les variables disponibles pour les étapes suivantes
         echo "namespace=$namespace" >> $GITHUB_ENV
@@ -65,7 +84,7 @@ runs:
       
     - name: Setup Kubernetes config
       run: |
-        echo "${{ secrets.KUBECONFIG }}" > /tmp/kube.config
+        echo "${{ inputs.kubeconfig }}" > /tmp/kube.config
         echo "KUBECONFIG=/tmp/kube.config" >> $GITHUB_ENV
 
     - name: Update Helm repo to get the latest version of the chart
