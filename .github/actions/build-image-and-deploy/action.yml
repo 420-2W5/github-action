@@ -28,6 +28,7 @@ runs:
     - name: Login into private image repository
       run: |
         buildah login -u ${{ inputs.docker_username }} -p ${{ inputs.docker_password }} ${{ inputs.docker_registry_url }}
+      shell: bash
 
     - name: Prepare variables for next steps
       run: |
@@ -71,28 +72,34 @@ runs:
         echo "urlComplete=$urlComplete"
         echo "tagVersion=$tagVersion"
         echo "tagBranch=$tagBranch"
+      shell: bash
         
     - name: Build image locally # Docker ne peut pas être utilisé pour builder, car Kubernetes utilise ContainerD et le runner est un pod du cluster
       run: | 
         sudo buildah bud -f dockerfile -t ${{ env.TAG_BRANCH }} .
         sudo buildah tag ${{ env.TAG_BRANCH }} ${{ env.TAG_VERSION }}
+      shell: bash
 
     - name: Push the image to private image repository
       run: |
         buildah push ${{ env.TAG_BRANCH }} ${{ env.TAG_BRANCH }}
         buildah push ${{ env.TAG_BRANCH }} ${{ env.TAG_VERSION }}
+      shell: bash
       
     - name: Setup Kubernetes config
       run: |
         echo "${{ inputs.kubeconfig }}" > /tmp/kube.config
         echo "KUBECONFIG=/tmp/kube.config" >> $GITHUB_ENV
+      shell: bash
 
     - name: Update Helm repo to get the latest version of the chart
       run: |
         helm repo add custom-helm-charts https://raw.githubusercontent.com/420-2w5/custom-helm-charts/refs/heads/main #TEMPORAIRE - DEVRAIT ÊTRE PRIVÉ
         helm repo update
+      shell: bash
         
     - name: Install or upgrade the app with Helm
       run: |
         helm upgrade ${{ env.urlWithoutDomain }} ${{ env.helmChatName }}  -f ./cd-values.yml --install --set image=${{ env.TAG_BRANCH }} --set host=${{ env.urlComplete }} --namespace ${{ env.namespace }}
         kubectl rollout restart deployment/${{ env.urlWithoutDomain }}-deployment --namespace ${{ env.namespace }}
+      shell: bash
