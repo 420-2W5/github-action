@@ -1,0 +1,79 @@
+name: "Build image and deploy"
+description: "Une action représentant toutes les étapes pour déployer une application dans le cluster Kubernetes"
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Login into private image repository
+      run: |
+        buildah login -u ${{ vars.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }} ${{ vars.DOCKER_REGISTRY_URL }}
+
+    - name: Prepare variables for next steps
+      run: |
+        # Récupérer les valeurs du fichier cd-values.yml
+        namespace=$(grep "^namespace:" "cd-values.yml" | awk '{print $2}')
+        helmChatName=$(grep "^helmChat:" "cd-values.yml" | awk '{print $2}')
+        urlPrefix=$(grep "^host:" "cd-values.yml" | awk '{print $2}')
+        version=$(grep "^version:" "cd-values.yml" | awk '{print $2}')
+
+        # Déterminer le tag de l'image et l'URL pour accéder à l'application en fonction de la branche git
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          branchTag="latest"
+          urlWithoutDomain=$urlPrefix
+        else
+          branchTag=$(echo "${{ github.ref_name }}" | tr '/' '-') # Remplacer les / par des - pour éviter les erreurs dans les noms de tags
+          urlWithoutDomain=$(echo "${urlPrefix}-${branchTag}")
+        fi
+        
+        # Calculer diverses valeurs utilisés pour le déploiement
+        urlComplete="${urlWithoutDomain}.kapydata.com"
+        lowercaseDockerRegistry=$(echo "${{ vars.DOCKER_REGISTRY }}" | tr '[:upper:]' '[:lower:]')
+        lowercaseGitHubRepository=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+        imagePathInRepository="${lowercaseDockerRegistry}/${lowercaseGitHubRepository}"
+        tagVersion="${{ vars.DOCKER_REGISTRY_TAG_PREFIX }}/${imagePathInRepository}:$version"
+        tagBranch="${{ vars.DOCKER_REGISTRY_TAG_PREFIX }}/${imagePathInRepository}:$branchTag"
+        
+        # Rendre les variables disponibles pour les étapes suivantes
+        echo "namespace=$namespace" >> $GITHUB_ENV
+        echo "helmChatName=$helmChatName" >> $GITHUB_ENV
+        echo "urlPrefix=$urlPrefix" >> $GITHUB_ENV
+        echo "urlWithoutDomain=$urlWithoutDomain" >> $GITHUB_ENV
+        echo "urlComplete=$urlComplete" >> $GITHUB_ENV
+        echo "TAG_VERSION=${tagVersion}" >> $GITHUB_ENV
+        echo "TAG_BRANCH=${tagBranch}" >> $GITHUB_ENV
+        
+        # Afficher les valeurs pour vérification
+        echo "namespace=$namespace"
+        echo "helmChatName=$helmChatName"
+        echo "urlPrefix=$urlPrefix"
+        echo "urlWithoutDomain=$urlWithoutDomain"
+        echo "urlComplete=$urlComplete"
+        echo "tagVersion=$tagVersion"
+        echo "tagBranch=$tagBranch"
+        
+    - name: Build image locally # Docker ne peut pas être utilisé pour builder, car Kubernetes utilise ContainerD et le runner est un pod du cluster
+      run: | 
+        sudo buildah bud -f dockerfile -t ${{ env.TAG_BRANCH }} .
+        sudo buildah tag ${{ env.TAG_BRANCH }} ${{ env.TAG_VERSION }}
+
+    - name: Push the image to private image repository
+      run: |
+        buildah push ${{ env.TAG_BRANCH }} ${{ env.TAG_BRANCH }}
+        buildah push ${{ env.TAG_BRANCH }} ${{ env.TAG_VERSION }}
+      
+    - name: Setup Kubernetes config
+      run: |
+        echo "${{ secrets.KUBECONFIG }}" > /tmp/kube.config
+        echo "KUBECONFIG=/tmp/kube.config" >> $GITHUB_ENV
+
+    - name: Update Helm repo to get the latest version of the chart
+      run: |
+        helm repo add custom-helm-charts https://raw.githubusercontent.com/420-2w5/custom-helm-charts/refs/heads/main #TEMPORAIRE - DEVRAIT ÊTRE PRIVÉ
+        helm repo update
+        
+    - name: Install or upgrade the app with Helm
+      run: |
+        helm upgrade ${{ env.urlWithoutDomain }} ${{ env.helmChatName }}  -f ./cd-values.yml --install --set image=${{ env.TAG_BRANCH }} --set host=${{ env.urlComplete }} --namespace ${{ env.namespace }}
+        kubectl rollout restart deployment/${{ env.urlWithoutDomain }}-deployment --namespace ${{ env.namespace }}
